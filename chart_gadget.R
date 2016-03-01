@@ -1,15 +1,21 @@
 library(shiny)
 library(miniUI)
 library(ggplot2)
+library(ggthemes)
 library(tidyr)
+library(dplyr)
 
 chartGadget = function(data) {
   
   ui = miniPage(title="Exploritory Chart Gadget", 
                 gadgetTitleBar("Exploritory Chart Gadget"),
-                conditionalPanel('1 == 0', textInput(inputId='showToggle',
-                                                     label = 'If you see this it b broken',
-                                                     value = '1')),
+                conditionalPanel('1 == 0', 
+                                 textInput(inputId='showToggle',
+                                           label = 'If you see this it b broken',
+                                           value = '1'),
+                                 textInput(inputId='xDateTime',
+                                           label='If you see this it is broken',
+                                           value = '0')),
                 miniContentPanel(
                   conditionalPanel('input.showToggle == "1"',
                                    miniTitleBar('Chart Details', 
@@ -35,28 +41,62 @@ chartGadget = function(data) {
                                                         'Select Y - vars',
                                                         list(), 
                                                         inline=TRUE,
-                                                        width='100%')
+                                                        width='100%'),
+                                     conditionalPanel('input.xDateTime == "1"',
+                                                      radioButtons('aggregate',
+                                                                   'Aggregate by:',
+                                                                   c('None' = 'none',
+                                                                     'Day' = 'day',
+                                                                     'Hour' = 'hour'),
+                                                                   selected='None'))
                                    )
                   ),
-                  imageOutput('image1')
+                  imageOutput('image1',
+                              brush=brushOpts(id="chart_brush",
+                                              direction=c("x"),
+                                              resetOnNew = TRUE),
+                              dblclick = dblclickOpts(id='chart_dblclick')
+                  )
                 )
   )
   
   server = function(input, output, session) {
     lvars = reactiveValues(xvar = '',
                            dvars = as.list(names(data)),
-                           vnames = as.list(names(data)))
+                           vnames = as.list(names(data)),
+                           ddata = data)
     
+    agg_data = function(data,
+                        direction='long') {
+      data = data %>% 
+        gather_('Variable',
+                'Value',
+                input$yvar) 
+      
+      if ( input$aggregate == 'day' ) {
+        
+        data = aggregate(as.formula(paste('Value ~', 
+                                          input$xvar,
+                                          '+ Variable')),
+                         data)
+        
+      }
+      if ( direction != 'long' ) {
+        return(spread_(data, 'Variable', 'Value'))
+      } else {
+        data
+      }
+    }
     output$image1 = renderPlot({
       if ( length(input$yvar) > 0 ) {
-        pdata = data %>% gather_('Variable',
-                                 'Value',
-                                 input$yvar)
+        pdata = lvars$ddata %>% agg_data
         
         g = ggplot(data = pdata,
                    aes_string(x=input$xvar,
                               y='Value',
-                              colour='Variable')) 
+                              colour='Variable')) +
+          theme_tufte()
+        
         print(input$chartType)
         if ( input$chartType == 'dot' ) {
           g = g + geom_point()
@@ -67,6 +107,15 @@ chartGadget = function(data) {
       }
     })
     
+    observeEvent(input$chart_brush, {
+      lvars$ddata = brushedPoints(lvars$ddata,
+                                  input$chart_brush)
+    })
+    
+    observeEvent(input$chart_dblclick, {
+      lvars$ddata = data
+    })
+    
     observe({
       updateSelectInput(session,
                         'xvar',
@@ -75,7 +124,7 @@ chartGadget = function(data) {
     
     # What to do when Done pressed
     observeEvent(input$done,
-                 {stopApp("By!")}
+                 {stopApp(lvars$ddata %>% agg_data(direction='wide'))}
     )
     
     observeEvent(input$detailHide, {updateTextInput(session, 'showToggle', value="0")})
