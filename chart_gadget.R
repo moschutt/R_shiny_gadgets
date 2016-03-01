@@ -48,7 +48,8 @@ chartGadget = function(data) {
                                                                    c('None' = 'none',
                                                                      'Day' = 'day',
                                                                      'Hour' = 'hour'),
-                                                                   selected='None'))
+                                                                   selected='None',
+                                                                   inline=TRUE))
                                    )
                   ),
                   imageOutput('image1',
@@ -61,43 +62,43 @@ chartGadget = function(data) {
   )
   
   server = function(input, output, session) {
-    lvars = reactiveValues(xvar = '',
-                           dvars = as.list(names(data)),
-                           vnames = as.list(names(data)),
-                           ddata = data)
+    lvars = reactiveValues(vnames = as.list(names(data)),
+                           ddata = data.frame())
     
-    agg_data = function(data,
-                        direction='long') {
-      data = data %>% 
+    my_gather = function(data) {
+      print(names(data))
+      print(input$xvar)
+      print(input$yvar)
+      data[,c(input$xvar, input$yvar)] %>% 
         gather_('Variable',
                 'Value',
-                input$yvar) 
-      
+                input$yvar)
+    }
+    
+    agg_data = function(d) {
       if ( input$aggregate == 'day' ) {
-        
-        data = aggregate(as.formula(paste('Value ~', 
-                                          input$xvar,
-                                          '+ Variable')),
-                         data)
-        
+        d[,input$xvar] = as.Date(d[,input$xvar])
+        return (aggregate(as.formula(paste('Value ~', 
+                                           input$xvar,
+                                           '+ Variable')),
+                          d, 
+                          mean))
+      } else if ( input$aggregate == 'none' ) {
+        return(data %>% my_gather)
       }
-      if ( direction != 'long' ) {
-        return(spread_(data, 'Variable', 'Value'))
-      } else {
-        data
+      else {
+        return(d)
       }
     }
+    
     output$image1 = renderPlot({
       if ( length(input$yvar) > 0 ) {
-        pdata = lvars$ddata %>% agg_data
-        
-        g = ggplot(data = pdata,
+        g = ggplot(data = lvars$ddata,
                    aes_string(x=input$xvar,
                               y='Value',
                               colour='Variable')) +
           theme_tufte()
         
-        print(input$chartType)
         if ( input$chartType == 'dot' ) {
           g = g + geom_point()
         } else {
@@ -107,32 +108,42 @@ chartGadget = function(data) {
       }
     })
     
+    observeEvent(input$aggregate, {
+      if ( input$xvar != '' && length(input$yvar) > 0 ) {
+        lvars$ddata = lvars$ddata %>% agg_data
+      }
+    })
+    
     observeEvent(input$chart_brush, {
       lvars$ddata = brushedPoints(lvars$ddata,
                                   input$chart_brush)
     })
     
     observeEvent(input$chart_dblclick, {
-      lvars$ddata = data
-    })
-    
-    observe({
-      updateSelectInput(session,
-                        'xvar',
-                        choices=c(list(''), as.list(names(data))))
+      lvars$ddata = data %>% my_gather %>% agg_data
     })
     
     # What to do when Done pressed
     observeEvent(input$done,
-                 {stopApp(lvars$ddata %>% agg_data(direction='wide'))}
+                 {stopApp(lvars$ddata %>% spread(key='Variable', value='Value'))}
     )
     
     observeEvent(input$detailHide, {updateTextInput(session, 'showToggle', value="0")})
     observeEvent(input$detailShow, {updateTextInput(session, 'showToggle', value="1")})
     
+    observeEvent(input$yvar, {
+      lvars$ddata = data %>% my_gather
+    })
+    
     observeEvent(input$xvar, {
       if( input$xvar != '' ) {
-        lvars$xvar = input$xvar
+        
+        if ( 'POSIXct' %in% class(data[,input$xvar]) ) {
+          updateTextInput(session, 
+                          'xDateTime', 
+                          value = '1')
+        }
+        
         lvars$vnames = as.list(names(data))
         lvars$vnames[[which(lvars$vnames == input$xvar)]] = NULL
         updateCheckboxGroupInput(session,
@@ -140,11 +151,16 @@ chartGadget = function(data) {
                                  choice=lvars$vnames,
                                  inline=TRUE)
       }
+      
+
+    })
+    
+    observe({
+    updateSelectInput(session,
+                      'xvar',
+                      choices=c(list(''), as.list(names(data))))
     })
   }
   
   runGadget(ui, server)
 }
-
-#chartGadget(cars)
-#chartGadget(mtcars)
